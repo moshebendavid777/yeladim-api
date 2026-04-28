@@ -1,0 +1,120 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  OWNER
+  CENTER_ADMIN
+  TEACHER
+  PARENT
+}
+
+enum InviteCodeType {
+  PERMANENT
+  TEMPORARY
+}
+
+enum LeadStatus {
+  NEW
+  CONTACTED
+  DEMO_BOOKED
+  CLOSED
+}
+
+model Center {
+  id          String   @id @default(uuid())
+  publicId    String   @unique
+  name        String
+  status      String   @default("active")
+  billingEmail String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  users       User[]
+  inviteCodes InviteCode[]
+  rooms       Room[]
+  children    Child[]
+  messages    Message[]
+  media       MediaObject[]
+}
+
+model User {
+  id           String   @id @default(uuid())
+  centerId     String?
+  center       Center?  @relation(fields: [centerId], references: [id])
+  email        String   @unique
+  passwordHash String
+  fullName     String
+  roles        UserRole[]
+  createdAt    DateTime @default(now())
+}
+
+model InviteCode {
+  id          String         @id @default(uuid())
+  centerId    String
+  center      Center         @relation(fields: [centerId], references: [id])
+  codeHash    String         @unique
+  label       String
+  type        InviteCodeType
+  role        UserRole
+  expiresAt   DateTime?
+  maxUses     Int?
+  usedCount   Int            @default(0)
+  disabledAt  DateTime?
+  createdAt   DateTime       @default(now())
+}
+
+model Room {
+  id       String @id @default(uuid())
+  centerId String
+  center   Center @relation(fields: [centerId], references: [id])
+  name     String
+}
+
+model Child {
+  id       String @id @default(uuid())
+  centerId String
+  center   Center @relation(fields: [centerId], references: [id])
+  fullName String
+  roomId   String?
+}
+
+model Message {
+  id             String   @id @default(uuid())
+  centerId       String
+  center         Center   @relation(fields: [centerId], references: [id])
+  conversationId String
+  senderId       String
+  ciphertext     String
+  iv             String
+  authTag        String
+  createdAt      DateTime @default(now())
+}
+
+model MediaObject {
+  id        String   @id @default(uuid())
+  centerId  String
+  center    Center   @relation(fields: [centerId], references: [id])
+  s3Key     String
+  mimeType  String
+  createdAt DateTime @default(now())
+}
+
+model Lead {
+  id          String     @id @default(uuid())
+  requestType String
+  fullName    String
+  email       String
+  phone       String?
+  centerName  String
+  role        String?
+  centers     String
+  message     String?
+  status      LeadStatus @default(NEW)
+  createdAt   DateTime   @default(now())
+}
