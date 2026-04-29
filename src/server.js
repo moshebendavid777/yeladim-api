@@ -47,6 +47,97 @@ const allowedOrigins = new Set([
   ...configuredOrigins,
 ]);
 
+const demoActivities = [
+  {
+    id: 1000,
+    center_id: 'center_demo',
+    kid_id: 101,
+    type: 'check_in',
+    title: 'Check-In',
+    description: 'Ryan arrived at 8:45 AM with a big smile and was so excited to see his friends!',
+    timestamp: '2024-05-14T08:45:00.000Z',
+    file_url: 'https://images.unsplash.com/photo-1519345182560-3f2917c472ef?auto=format&fit=crop&w=900&q=80',
+    file_urls: [
+      'https://images.unsplash.com/photo-1519345182560-3f2917c472ef?auto=format&fit=crop&w=900&q=80',
+      'https://images.unsplash.com/photo-1516627145497-ae6968895b74?auto=format&fit=crop&w=900&q=80',
+      'https://images.unsplash.com/photo-1503454537195-1dcabb73ffb9?auto=format&fit=crop&w=900&q=80',
+    ],
+    created_at: '2024-05-14T08:45:00.000Z',
+  },
+  {
+    id: 1001,
+    center_id: 'center_demo',
+    kid_id: 101,
+    type: 'art',
+    title: 'Art & Creativity',
+    description: 'Ryan enjoyed painting and made a beautiful rainbow! He was very creative today.',
+    timestamp: '2024-05-14T10:15:00.000Z',
+    created_at: '2024-05-14T10:15:00.000Z',
+  },
+  {
+    id: 1002,
+    center_id: 'center_demo',
+    kid_id: 101,
+    type: 'lunch',
+    title: 'Lunch Time',
+    description: 'Ryan had a healthy lunch and ate everything! He tried broccoli and liked it too.',
+    timestamp: '2024-05-14T12:30:00.000Z',
+    file_url: 'https://images.unsplash.com/photo-1516627145497-ae6968895b74?auto=format&fit=crop&w=900&q=80',
+    created_at: '2024-05-14T12:30:00.000Z',
+  },
+  {
+    id: 1006,
+    center_id: 'center_demo',
+    kid_id: 101,
+    type: 'nap',
+    title: 'Nap Time',
+    description: 'Ryan had a good nap and is all rested up for more fun!',
+    timestamp: '2024-05-14T14:00:00.000Z',
+    created_at: '2024-05-14T14:00:00.000Z',
+  },
+  {
+    id: 1007,
+    center_id: 'center_demo',
+    kid_id: 101,
+    type: 'play',
+    title: 'Play Time',
+    description: 'Ryan loved building tall towers with blocks and playing with his friends in the play area.',
+    timestamp: '2024-05-14T15:30:00.000Z',
+    file_url: 'https://images.unsplash.com/photo-1503454537195-1dcabb73ffb9?auto=format&fit=crop&w=900&q=80',
+    created_at: '2024-05-14T15:30:00.000Z',
+  },
+  {
+    id: 1003,
+    center_id: 'center_demo',
+    kid_id: 102,
+    type: 'check_in',
+    title: 'Check-In',
+    description: 'Mia came in smiling and waved to everyone in the Sun Room.',
+    timestamp: '2024-05-14T08:55:00.000Z',
+    created_at: '2024-05-14T08:55:00.000Z',
+  },
+  {
+    id: 1004,
+    center_id: 'center_demo',
+    kid_id: 103,
+    type: 'potty',
+    title: 'Potty success',
+    description: 'Asked independently and was very proud.',
+    timestamp: '2026-02-04T15:05:00.000Z',
+    created_at: '2026-02-04T15:05:00.000Z',
+  },
+  {
+    id: 1005,
+    center_id: 'center_demo',
+    kid_id: 104,
+    type: 'diaper',
+    title: 'Diaper change',
+    description: 'Fresh change and ready to play.',
+    timestamp: '2026-02-06T13:10:00.000Z',
+    created_at: '2026-02-06T13:10:00.000Z',
+  },
+];
+
 const defaultDb = {
   centers: [
     {
@@ -71,6 +162,7 @@ const defaultDb = {
   ],
   invite_codes: [],
   leads: [],
+  activities: demoActivities,
   messages: [],
   push_tokens: [],
   media_objects: [],
@@ -332,8 +424,19 @@ async function saveDb(db) {
 }
 
 async function ensureBootstrapOwner(db) {
+  db.activities = Array.isArray(db.activities) ? db.activities : [];
+  const existingActivityIds = new Set(db.activities.map(activity => String(activity.id)));
+  const missingDemoActivities = demoActivities.filter(activity => !existingActivityIds.has(String(activity.id)));
+  if (missingDemoActivities.length) {
+    db.activities.push(...missingDemoActivities);
+  }
+  db.media_objects = Array.isArray(db.media_objects) ? db.media_objects : [];
+  db.messages = Array.isArray(db.messages) ? db.messages : [];
+  db.push_tokens = Array.isArray(db.push_tokens) ? db.push_tokens : [];
+  db.owner_settings = db.owner_settings || defaultDb.owner_settings;
+
   if (!bootstrapOwnerEmail || !bootstrapOwnerPassword) {
-    return false;
+    return Boolean(missingDemoActivities.length);
   }
   const email = bootstrapOwnerEmail.toLowerCase();
   const existing = db.users.find(user => user.email.toLowerCase() === email);
@@ -388,7 +491,7 @@ function requireAuth(req, db) {
   return user ? {...payload, user} : null;
 }
 
-function requireUploadAuth(req, db) {
+function requireAppAuth(req, db) {
   const auth = requireAuth(req, db);
   if (auth) {
     return auth;
@@ -405,6 +508,27 @@ function requireUploadAuth(req, db) {
     };
   }
   return null;
+}
+
+function getActivityTitle(type) {
+  const titleMap = {
+    check_in: 'Check-In',
+    lunch: 'Lunch logged',
+    snack: 'Snack logged',
+    nap: 'Nap Time',
+    nap_start: 'Nap started',
+    nap_end: 'Nap ended',
+    diaper: 'Diaper change',
+    potty: 'Potty update',
+    art: 'Art & Creativity',
+    painting: 'Painting',
+    reading: 'Reading',
+    playground: 'Playground',
+    play: 'Play Time',
+    walk: 'Walk',
+    other: 'Activity update',
+  };
+  return titleMap[type] || 'Activity update';
 }
 
 function requireOwner(req, db) {
@@ -647,6 +771,65 @@ async function route(req, res) {
         return;
       }
       sendJson(res, 200, {settings: {show_read_receipts: true}}, origin);
+      return;
+    }
+
+    if (req.method === 'GET' && url.pathname === '/v1/activities') {
+      const auth = requireAppAuth(req, db);
+      if (!auth) {
+        sendJson(res, 401, {error: 'Authentication required'}, origin);
+        return;
+      }
+      const kidId = url.searchParams.get('kid_id');
+      const page = Math.max(1, Number(url.searchParams.get('page') || 1));
+      const perPage = Math.max(1, Math.min(50, Number(url.searchParams.get('per_page') || 15)));
+      const centerId = auth.center_id || url.searchParams.get('center_id') || 'center_demo';
+      const all = (db.activities || [])
+        .filter(activity => String(activity.center_id || centerId) === String(centerId))
+        .filter(activity => !kidId || String(activity.kid_id) === String(kidId))
+        .sort((a, b) => new Date(b.timestamp || b.created_at) - new Date(a.timestamp || a.created_at));
+      const start = (page - 1) * perPage;
+      sendJson(res, 200, {
+        items: all.slice(start, start + perPage),
+        has_more: start + perPage < all.length,
+      }, origin);
+      return;
+    }
+
+    if (req.method === 'POST' && url.pathname === '/v1/activities') {
+      const auth = requireAppAuth(req, db);
+      if (!auth) {
+        sendJson(res, 401, {error: 'Authentication required'}, origin);
+        return;
+      }
+      const body = await readJson(req);
+      const centerId = auth.center_id || body.center_id || 'center_demo';
+      const timestamp = body.timestamp || body.occurred_at || new Date().toISOString();
+      const activity = {
+        id: createId('activity'),
+        center_id: centerId,
+        kid_id: body.kid_id,
+        type: body.type || 'other',
+        title: body.title || getActivityTitle(body.type),
+        description: body.description || '',
+        timestamp,
+        occurred_at: timestamp,
+        file_url: body.file_url || undefined,
+        file_urls: Array.isArray(body.file_urls) ? body.file_urls : undefined,
+        media_type: body.media_type || (body.file_url || body.file_urls?.length ? 'image' : undefined),
+        global: Boolean(body.global),
+        created_by: auth.sub,
+        created_at: new Date().toISOString(),
+      };
+      db.activities = Array.isArray(db.activities) ? db.activities : [];
+      db.activities.unshift(activity);
+      audit(db, auth.user?.email || auth.sub, 'activity_created', String(activity.kid_id), {
+        center_id: centerId,
+        type: activity.type,
+        demo: Boolean(auth.demo),
+      });
+      await saveDb(db);
+      sendJson(res, 201, activity, origin);
       return;
     }
 
@@ -893,7 +1076,7 @@ async function route(req, res) {
     }
 
     if (req.method === 'POST' && url.pathname === '/v1/uploads/presign') {
-      const auth = requireUploadAuth(req, db);
+      const auth = requireAppAuth(req, db);
       if (!auth) {
         sendJson(res, 401, {error: 'Authentication required'}, origin);
         return;
