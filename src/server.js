@@ -70,6 +70,15 @@ const defaultDb = {
   push_tokens: [],
   media_objects: [],
   audit_events: [],
+  owner_settings: {
+    storage_settings: {
+      provider: 'spaces',
+      bucket: 'yeladim-centers-staging',
+      region: 'nyc3',
+      endpoint: 'https://nyc3.digitaloceanspaces.com',
+      cdnUrl: '',
+    },
+  },
 };
 
 let pgPoolPromise;
@@ -600,6 +609,39 @@ async function route(req, res) {
             created_at: user.created_at,
           })),
       }, origin);
+      return;
+    }
+
+    if (req.method === 'GET' && url.pathname === '/v1/owner/settings') {
+      if (!requireOwner(req, db)) {
+        sendJson(res, 403, {error: 'Owner access required'}, origin);
+        return;
+      }
+      sendJson(res, 200, {settings: db.owner_settings || defaultDb.owner_settings}, origin);
+      return;
+    }
+
+    if (req.method === 'POST' && url.pathname === '/v1/owner/settings') {
+      const auth = requireOwner(req, db);
+      if (!auth) {
+        sendJson(res, 403, {error: 'Owner access required'}, origin);
+        return;
+      }
+      const body = await readJson(req);
+      db.owner_settings = {
+        ...(db.owner_settings || defaultDb.owner_settings),
+        storage_settings: {
+          ...((db.owner_settings || defaultDb.owner_settings).storage_settings || {}),
+          ...(body.storage_settings || body.storageSettings || {}),
+        },
+        updated_at: new Date().toISOString(),
+        updated_by: auth.user.email,
+      };
+      audit(db, auth.user.email, 'owner_settings_updated', 'Owner settings', {
+        storage_provider: db.owner_settings.storage_settings.provider,
+      });
+      await saveDb(db);
+      sendJson(res, 200, {settings: db.owner_settings}, origin);
       return;
     }
 
