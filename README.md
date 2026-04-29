@@ -34,6 +34,29 @@ http://localhost:4100
 - `POST /v1/uploads/presign`
 - `POST /v1/push/register`
 
+## Storage Provider
+
+The API supports either DigitalOcean Spaces or AWS S3 through S3-compatible settings.
+
+DigitalOcean Spaces staging example:
+
+```text
+STORAGE_PROVIDER=spaces
+STORAGE_BUCKET=yeladim-centers-staging
+STORAGE_REGION=nyc3
+STORAGE_ENDPOINT=https://nyc3.digitaloceanspaces.com
+```
+
+AWS S3 production example:
+
+```text
+STORAGE_PROVIDER=s3
+STORAGE_BUCKET=yeladim-centers-prod
+STORAGE_REGION=us-east-1
+STORAGE_ENDPOINT=https://s3.amazonaws.com
+S3_KMS_KEY_ALIAS=alias/yeladim-media
+```
+
 ## Production TODO
 
 1. Replace the transitional JSONB app-state table with fully normalized Prisma tables.

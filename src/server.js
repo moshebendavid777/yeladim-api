@@ -14,6 +14,14 @@ const port = Number(process.env.PORT || 4100);
 const jwtSecret = process.env.JWT_SECRET || 'dev-secret-change-before-production';
 const salesEmail = process.env.SALES_EMAIL || 'sales@yeladim.app';
 const databaseUrl = process.env.DATABASE_URL;
+const storageProvider = process.env.STORAGE_PROVIDER || 'spaces';
+const storageBucket = process.env.STORAGE_BUCKET || process.env.S3_BUCKET || 'yeladim-dev';
+const storageRegion = process.env.STORAGE_REGION || process.env.AWS_REGION || 'nyc3';
+const storageEndpoint = process.env.STORAGE_ENDPOINT || (
+  storageProvider === 'spaces'
+    ? `https://${storageRegion}.digitaloceanspaces.com`
+    : 'https://s3.amazonaws.com'
+);
 const configuredOrigins = (process.env.ALLOWED_ORIGINS || '')
   .split(',')
   .map(origin => origin.trim())
@@ -282,6 +290,7 @@ async function route(req, res) {
         ok: true,
         service: 'yeladim-api',
         database_configured: Boolean(databaseUrl),
+        storage_provider: storageProvider,
       }, origin);
       return;
     }
@@ -524,10 +533,14 @@ async function route(req, res) {
       const centerId = auth.center_id || body.center_id;
       const s3Key = `centers/${centerId}/${Date.now()}-${body.filename}`;
       sendJson(res, 200, {
-        upload_url: `https://s3.amazonaws.com/${process.env.S3_BUCKET || 'yeladim-dev'}/${s3Key}`,
+        provider: storageProvider,
+        bucket: storageBucket,
+        region: storageRegion,
+        endpoint: storageEndpoint,
+        upload_url: `${storageEndpoint}/${storageBucket}/${s3Key}`,
         method: 'PUT',
         s3_key: s3Key,
-        note: 'Development placeholder. Replace with AWS SDK signed URL in production.',
+        note: 'Development placeholder. Replace with S3-compatible signed URL in production.',
       }, origin);
       return;
     }
