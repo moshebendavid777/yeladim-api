@@ -9,7 +9,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const dataDir = path.resolve(__dirname, '../data');
 const dbPath = path.join(dataDir, 'dev-db.json');
 
-const host = process.env.HOST || '0.0.0.0';
+const host = process.env.API_BIND_HOST || '0.0.0.0';
 const port = Number(process.env.PORT || 4100);
 const jwtSecret = process.env.JWT_SECRET || 'dev-secret-change-before-production';
 const salesEmail = process.env.SALES_EMAIL || 'sales@yeladim.app';
