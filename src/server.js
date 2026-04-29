@@ -380,6 +380,23 @@ async function route(req, res) {
       await saveDb(db);
     }
 
+    if (req.method === 'GET' && url.pathname === '/health/auth') {
+      sendJson(res, 200, {
+        ok: true,
+        owner_bootstrap_configured: Boolean(bootstrapOwnerEmail && bootstrapOwnerPassword),
+        owner_users: db.users.filter(user => (user.roles || []).includes('owner')).length,
+        owner_login_ready: Boolean(
+          bootstrapOwnerEmail
+          && bootstrapOwnerPassword
+          && db.users.some(user =>
+            user.email.toLowerCase() === bootstrapOwnerEmail.toLowerCase()
+            && (user.roles || []).includes('owner'),
+          ),
+        ),
+      }, origin);
+      return;
+    }
+
     if (req.method === 'POST' && url.pathname === '/v1/auth/login') {
       const body = await readJson(req);
       const user = db.users.find(candidate => candidate.email.toLowerCase() === String(body.email || '').toLowerCase());
