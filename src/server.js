@@ -271,12 +271,14 @@ function getRuntimeStorageSettings(db) {
   const savedBucketIsPlaceholder = ['yeladim-centers-staging', 'yeladim-dev', ''].includes(saved.bucket || '');
   const savedEndpointIsPlaceholder = ['https://nyc3.digitaloceanspaces.com', ''].includes(saved.endpoint || '');
   const savedRegionIsPlaceholder = ['nyc3', ''].includes(saved.region || '');
+  const savedCdnUrl = saved.cdnUrl || saved.cdn_url || '';
+  const savedCdnUrlIsInvalid = !savedCdnUrl || savedCdnUrl.includes('eyonmer.com');
   return {
     provider: saved.provider || storageProvider,
     bucket: savedBucketIsPlaceholder && storageBucket ? storageBucket : saved.bucket || storageBucket,
     region: savedRegionIsPlaceholder && storageRegion ? storageRegion : saved.region || storageRegion,
     endpoint: savedEndpointIsPlaceholder && storageEndpoint ? storageEndpoint : saved.endpoint || storageEndpoint,
-    cdnUrl: saved.cdnUrl || saved.cdn_url || storageCdnUrl,
+    cdnUrl: savedCdnUrlIsInvalid && storageCdnUrl ? storageCdnUrl : savedCdnUrl || storageCdnUrl,
   };
 }
 
@@ -287,13 +289,17 @@ function presignStoragePutUrl({key, storageConfig, expires = 900}) {
 
   const endpointUrl = new URL(storageConfig.endpoint);
   const host = endpointUrl.host;
+  const endpointUsesBucketHost = host.startsWith(`${storageConfig.bucket}.`);
   const uploadHeaders = storageConfig.cdnUrl ? {'x-amz-acl': 'public-read'} : {};
   const signedHeaders = ['host', ...Object.keys(uploadHeaders).sort()];
   const now = new Date();
   const amzDate = now.toISOString().replace(/[:-]|\.\d{3}/g, '');
   const dateStamp = amzDate.slice(0, 8);
   const credentialScope = `${dateStamp}/${storageConfig.region}/s3/aws4_request`;
-  const canonicalUri = `${endpointUrl.pathname.replace(/\/$/, '')}/${storageConfig.bucket}/${encodeS3Path(key)}`;
+  const basePath = endpointUrl.pathname.replace(/\/$/, '');
+  const canonicalUri = endpointUsesBucketHost
+    ? `${basePath}/${encodeS3Path(key)}`
+    : `${basePath}/${storageConfig.bucket}/${encodeS3Path(key)}`;
   const query = {
     'X-Amz-Algorithm': 'AWS4-HMAC-SHA256',
     'X-Amz-Credential': `${storageAccessKeyId}/${credentialScope}`,
@@ -329,7 +335,9 @@ function presignStoragePutUrl({key, storageConfig, expires = 900}) {
   const signingKey = getAwsSigningKey(storageSecretAccessKey, dateStamp, storageConfig.region, 's3');
   const signature = hmac(signingKey, stringToSign, 'hex');
   const uploadUrl = `${endpointUrl.origin}${canonicalUri}?${canonicalQuery}&X-Amz-Signature=${signature}`;
-  const fileBaseUrl = storageConfig.cdnUrl || `${endpointUrl.origin}/${storageConfig.bucket}`;
+  const fileBaseUrl = storageConfig.cdnUrl || (
+    endpointUsesBucketHost ? endpointUrl.origin : `${endpointUrl.origin}/${storageConfig.bucket}`
+  );
 
   return {
     upload_url: uploadUrl,
