@@ -312,6 +312,26 @@ function audit(db, actor, action, target, metadata = {}) {
   });
 }
 
+function buildSession(db, user) {
+  const centers = user.center_id
+    ? db.centers.filter(center => center.id === user.center_id)
+    : [];
+  return {
+    token: signToken({sub: user.id, center_id: user.center_id, roles: user.roles}),
+    user: {
+      id: user.id,
+      email: user.email,
+      full_name: user.full_name,
+      roles: user.roles,
+      center_id: user.center_id,
+    },
+    roles: user.roles,
+    centers,
+    active_center: centers[0] || null,
+    kids: [],
+  };
+}
+
 async function route(req, res) {
   const origin = req.headers.origin;
   if (req.method === 'OPTIONS') {
@@ -366,10 +386,7 @@ async function route(req, res) {
         sendJson(res, 401, {error: 'Invalid email or password'}, origin);
         return;
       }
-      sendJson(res, 200, {
-        token: signToken({sub: user.id, center_id: user.center_id, roles: user.roles}),
-        user: {id: user.id, email: user.email, full_name: user.full_name, roles: user.roles, center_id: user.center_id},
-      }, origin);
+      sendJson(res, 200, buildSession(db, user), origin);
       return;
     }
 
@@ -409,10 +426,40 @@ async function route(req, res) {
       db.users.push(user);
       audit(db, user.email, 'signup', inviteResult.center.name, {role: inviteResult.invite.role});
       await saveDb(db);
-      sendJson(res, 201, {
-        token: signToken({sub: user.id, center_id: user.center_id, roles: user.roles}),
-        user: {id: user.id, email: user.email, full_name: user.full_name, roles: user.roles, center_id: user.center_id},
-      }, origin);
+      sendJson(res, 201, buildSession(db, user), origin);
+      return;
+    }
+
+    if (req.method === 'GET' && url.pathname === '/v1/centers') {
+      const auth = requireAuth(req, db);
+      if (!auth) {
+        sendJson(res, 401, {error: 'Authentication required'}, origin);
+        return;
+      }
+      const centers = auth.center_id
+        ? db.centers.filter(center => center.id === auth.center_id)
+        : db.centers;
+      sendJson(res, 200, {centers, active_center: centers[0] || null}, origin);
+      return;
+    }
+
+    if (req.method === 'GET' && url.pathname === '/v1/kids') {
+      const auth = requireAuth(req, db);
+      if (!auth) {
+        sendJson(res, 401, {error: 'Authentication required'}, origin);
+        return;
+      }
+      sendJson(res, 200, {kids: []}, origin);
+      return;
+    }
+
+    if (req.method === 'GET' && url.pathname === '/v1/settings') {
+      const auth = requireAuth(req, db);
+      if (!auth) {
+        sendJson(res, 401, {error: 'Authentication required'}, origin);
+        return;
+      }
+      sendJson(res, 200, {settings: {show_read_receipts: true}}, origin);
       return;
     }
 
