@@ -14,6 +14,9 @@ const port = Number(process.env.PORT || 4100);
 const jwtSecret = process.env.JWT_SECRET || 'dev-secret-change-before-production';
 const salesEmail = process.env.SALES_EMAIL || 'sales@yeladim.app';
 const databaseUrl = process.env.DATABASE_URL;
+const bootstrapOwnerEmail = process.env.OWNER_EMAIL;
+const bootstrapOwnerPassword = process.env.OWNER_PASSWORD;
+const bootstrapOwnerName = process.env.OWNER_NAME || 'Platform Owner';
 const storageProvider = process.env.STORAGE_PROVIDER || 'spaces';
 const storageBucket = process.env.STORAGE_BUCKET || process.env.S3_BUCKET || 'yeladim-dev';
 const storageRegion = process.env.STORAGE_REGION || process.env.AWS_REGION || 'nyc3';
@@ -220,6 +223,31 @@ async function saveDb(db) {
   await writeFile(dbPath, JSON.stringify(db, null, 2));
 }
 
+async function ensureBootstrapOwner(db) {
+  if (!bootstrapOwnerEmail || !bootstrapOwnerPassword) {
+    return false;
+  }
+  const email = bootstrapOwnerEmail.toLowerCase();
+  const existing = db.users.find(user => user.email.toLowerCase() === email);
+  if (existing) {
+    const nextRoles = new Set([...(existing.roles || []), 'owner']);
+    existing.roles = [...nextRoles];
+    existing.full_name = existing.full_name || bootstrapOwnerName;
+    existing.password_hash = hashPassword(bootstrapOwnerPassword);
+    return true;
+  }
+  db.users.push({
+    id: createId('owner'),
+    center_id: null,
+    email: bootstrapOwnerEmail,
+    full_name: bootstrapOwnerName,
+    password_hash: hashPassword(bootstrapOwnerPassword),
+    roles: ['owner'],
+    created_at: new Date().toISOString(),
+  });
+  return true;
+}
+
 function sendJson(res, status, body, origin) {
   const allowedOrigin = allowedOrigins.has(origin) ? origin : [...allowedOrigins][0];
   res.writeHead(status, {
@@ -327,6 +355,9 @@ async function route(req, res) {
     }
 
     const db = await loadDb();
+    if (await ensureBootstrapOwner(db)) {
+      await saveDb(db);
+    }
 
     if (req.method === 'POST' && url.pathname === '/v1/auth/login') {
       const body = await readJson(req);
@@ -485,6 +516,61 @@ async function route(req, res) {
         return;
       }
       sendJson(res, 200, {leads: db.leads}, origin);
+      return;
+    }
+
+    if (req.method === 'GET' && url.pathname === '/v1/owner/users') {
+      if (!requireOwner(req, db)) {
+        sendJson(res, 403, {error: 'Owner access required'}, origin);
+        return;
+      }
+      sendJson(res, 200, {
+        users: db.users
+          .filter(user => (user.roles || []).includes('owner'))
+          .map(user => ({
+            id: user.id,
+            email: user.email,
+            full_name: user.full_name,
+            roles: user.roles,
+            created_at: user.created_at,
+          })),
+      }, origin);
+      return;
+    }
+
+    if (req.method === 'POST' && url.pathname === '/v1/owner/users') {
+      const auth = requireOwner(req, db);
+      if (!auth) {
+        sendJson(res, 403, {error: 'Owner access required'}, origin);
+        return;
+      }
+      const body = await readJson(req);
+      if (db.users.some(user => user.email.toLowerCase() === String(body.email || '').toLowerCase())) {
+        sendJson(res, 409, {error: 'Email already exists'}, origin);
+        return;
+      }
+      const roles = [...new Set(['owner', ...(Array.isArray(body.roles) ? body.roles : [])])];
+      const user = {
+        id: createId('owner_user'),
+        center_id: null,
+        email: body.email,
+        full_name: body.full_name,
+        password_hash: hashPassword(body.password),
+        roles,
+        created_at: new Date().toISOString(),
+      };
+      db.users.push(user);
+      audit(db, auth.user.email, 'owner_user_created', user.email, {roles});
+      await saveDb(db);
+      sendJson(res, 201, {
+        user: {
+          id: user.id,
+          email: user.email,
+          full_name: user.full_name,
+          roles: user.roles,
+          created_at: user.created_at,
+        },
+      }, origin);
       return;
     }
 
