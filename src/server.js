@@ -268,11 +268,14 @@ function getAwsSigningKey(secretKey, dateStamp, region, service) {
 
 function getRuntimeStorageSettings(db) {
   const saved = db?.owner_settings?.storage_settings || {};
+  const savedBucketIsPlaceholder = ['yeladim-centers-staging', 'yeladim-dev', ''].includes(saved.bucket || '');
+  const savedEndpointIsPlaceholder = ['https://nyc3.digitaloceanspaces.com', ''].includes(saved.endpoint || '');
+  const savedRegionIsPlaceholder = ['nyc3', ''].includes(saved.region || '');
   return {
     provider: saved.provider || storageProvider,
-    bucket: saved.bucket || storageBucket,
-    region: saved.region || storageRegion,
-    endpoint: saved.endpoint || storageEndpoint,
+    bucket: savedBucketIsPlaceholder && storageBucket ? storageBucket : saved.bucket || storageBucket,
+    region: savedRegionIsPlaceholder && storageRegion ? storageRegion : saved.region || storageRegion,
+    endpoint: savedEndpointIsPlaceholder && storageEndpoint ? storageEndpoint : saved.endpoint || storageEndpoint,
     cdnUrl: saved.cdnUrl || saved.cdn_url || storageCdnUrl,
   };
 }
