@@ -70,13 +70,22 @@ const defaultDb = {
 
 let pgPoolPromise;
 
+function getSanitizedDatabaseUrl() {
+  const url = new URL(databaseUrl);
+  url.searchParams.delete('sslmode');
+  url.searchParams.delete('sslrootcert');
+  url.searchParams.delete('sslcert');
+  url.searchParams.delete('sslkey');
+  return url.toString();
+}
+
 async function getPgPool() {
   if (!databaseUrl) {
     return null;
   }
   if (!pgPoolPromise) {
     pgPoolPromise = import('pg').then(({Pool}) => new Pool({
-      connectionString: databaseUrl,
+      connectionString: getSanitizedDatabaseUrl(),
       ssl: {rejectUnauthorized: false},
     }));
   }
