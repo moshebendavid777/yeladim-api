@@ -274,13 +274,40 @@ async function route(req, res) {
   }
 
   const url = new URL(req.url, `http://${req.headers.host}`);
-  const db = await loadDb();
 
   try {
     if (req.method === 'GET' && url.pathname === '/health') {
-      sendJson(res, 200, {ok: true, service: 'yeladim-api'}, origin);
+      sendJson(res, 200, {
+        ok: true,
+        service: 'yeladim-api',
+        database_configured: Boolean(databaseUrl),
+      }, origin);
       return;
     }
+
+    if (req.method === 'GET' && url.pathname === '/health/db') {
+      const startedAt = Date.now();
+      const pool = await getPgPool();
+      if (!pool) {
+        sendJson(res, 200, {
+          ok: true,
+          database: 'local-json-fallback',
+          configured: false,
+        }, origin);
+        return;
+      }
+      const result = await pool.query('SELECT NOW() AS now');
+      sendJson(res, 200, {
+        ok: true,
+        database: 'postgres',
+        connected: true,
+        now: result.rows[0].now,
+        latency_ms: Date.now() - startedAt,
+      }, origin);
+      return;
+    }
+
+    const db = await loadDb();
 
     if (req.method === 'POST' && url.pathname === '/v1/auth/login') {
       const body = await readJson(req);
