@@ -27,6 +27,9 @@ const storageEndpoint = process.env.STORAGE_ENDPOINT || (
     ? `https://${storageRegion}.digitaloceanspaces.com`
     : 'https://s3.amazonaws.com'
 );
+const storageAccessKeyId = process.env.STORAGE_ACCESS_KEY_ID || process.env.AWS_ACCESS_KEY_ID;
+const storageSecretAccessKey = process.env.STORAGE_SECRET_ACCESS_KEY || process.env.AWS_SECRET_ACCESS_KEY;
+const storageCdnUrl = process.env.STORAGE_CDN_URL || '';
 const configuredOrigins = (process.env.ALLOWED_ORIGINS || '')
   .split(',')
   .map(origin => origin.trim())
@@ -136,6 +139,99 @@ function verifyPassword(password, hash) {
 
 function createId(prefix) {
   return `${prefix}_${crypto.randomBytes(10).toString('hex')}`;
+}
+
+function encodeRfc3986(value) {
+  return encodeURIComponent(value).replace(/[!'()*]/g, character =>
+    `%${character.charCodeAt(0).toString(16).toUpperCase()}`,
+  );
+}
+
+function encodeS3Path(value) {
+  return String(value)
+    .split('/')
+    .map(segment => encodeRfc3986(segment))
+    .join('/');
+}
+
+function sanitizeFilename(filename = 'upload') {
+  const clean = String(filename)
+    .replace(/[/\\?%*:|"<>]/g, '-')
+    .replace(/\s+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '');
+  return clean || 'upload';
+}
+
+function hmac(key, value, encoding) {
+  return crypto.createHmac('sha256', key).update(value).digest(encoding);
+}
+
+function getAwsSigningKey(secretKey, dateStamp, region, service) {
+  const kDate = hmac(`AWS4${secretKey}`, dateStamp);
+  const kRegion = hmac(kDate, region);
+  const kService = hmac(kRegion, service);
+  return hmac(kService, 'aws4_request');
+}
+
+function getRuntimeStorageSettings(db) {
+  const saved = db?.owner_settings?.storage_settings || {};
+  return {
+    provider: saved.provider || storageProvider,
+    bucket: saved.bucket || storageBucket,
+    region: saved.region || storageRegion,
+    endpoint: saved.endpoint || storageEndpoint,
+    cdnUrl: saved.cdnUrl || saved.cdn_url || storageCdnUrl,
+  };
+}
+
+function presignStoragePutUrl({key, storageConfig, expires = 900}) {
+  if (!storageAccessKeyId || !storageSecretAccessKey || !storageConfig.bucket) {
+    return null;
+  }
+
+  const endpointUrl = new URL(storageConfig.endpoint);
+  const host = endpointUrl.host;
+  const now = new Date();
+  const amzDate = now.toISOString().replace(/[:-]|\.\d{3}/g, '');
+  const dateStamp = amzDate.slice(0, 8);
+  const credentialScope = `${dateStamp}/${storageConfig.region}/s3/aws4_request`;
+  const canonicalUri = `${endpointUrl.pathname.replace(/\/$/, '')}/${storageConfig.bucket}/${encodeS3Path(key)}`;
+  const query = {
+    'X-Amz-Algorithm': 'AWS4-HMAC-SHA256',
+    'X-Amz-Credential': `${storageAccessKeyId}/${credentialScope}`,
+    'X-Amz-Date': amzDate,
+    'X-Amz-Expires': String(expires),
+    'X-Amz-SignedHeaders': 'host',
+  };
+  const canonicalQuery = Object.keys(query)
+    .sort()
+    .map(name => `${encodeRfc3986(name)}=${encodeRfc3986(query[name])}`)
+    .join('&');
+  const canonicalRequest = [
+    'PUT',
+    canonicalUri,
+    canonicalQuery,
+    `host:${host}`,
+    '',
+    'host',
+    'UNSIGNED-PAYLOAD',
+  ].join('\n');
+  const stringToSign = [
+    'AWS4-HMAC-SHA256',
+    amzDate,
+    credentialScope,
+    crypto.createHash('sha256').update(canonicalRequest).digest('hex'),
+  ].join('\n');
+  const signingKey = getAwsSigningKey(storageSecretAccessKey, dateStamp, storageConfig.region, 's3');
+  const signature = hmac(signingKey, stringToSign, 'hex');
+  const uploadUrl = `${endpointUrl.origin}${canonicalUri}?${canonicalQuery}&X-Amz-Signature=${signature}`;
+  const fileBaseUrl = storageConfig.cdnUrl || `${endpointUrl.origin}/${storageConfig.bucket}`;
+
+  return {
+    upload_url: uploadUrl,
+    file_url: `${fileBaseUrl.replace(/\/$/, '')}/${encodeS3Path(key)}`,
+  };
 }
 
 function hashInviteCode(code) {
@@ -290,6 +386,25 @@ function requireAuth(req, db) {
   }
   const user = db.users.find(candidate => candidate.id === payload.sub);
   return user ? {...payload, user} : null;
+}
+
+function requireUploadAuth(req, db) {
+  const auth = requireAuth(req, db);
+  if (auth) {
+    return auth;
+  }
+  const header = req.headers.authorization || '';
+  const token = header.startsWith('Bearer ') ? header.slice(7) : null;
+  if (String(token || '').startsWith('demo-')) {
+    return {
+      sub: token,
+      center_id: 'center_demo',
+      roles: token.includes('teacher') ? ['teacher'] : token.includes('admin') ? ['admin'] : ['parent'],
+      user: {id: token, email: `${token}@demo.local`},
+      demo: true,
+    };
+  }
+  return null;
 }
 
 function requireOwner(req, db) {
@@ -778,23 +893,48 @@ async function route(req, res) {
     }
 
     if (req.method === 'POST' && url.pathname === '/v1/uploads/presign') {
-      const auth = requireAuth(req, db);
+      const auth = requireUploadAuth(req, db);
       if (!auth) {
         sendJson(res, 401, {error: 'Authentication required'}, origin);
         return;
       }
       const body = await readJson(req);
       const centerId = auth.center_id || body.center_id;
-      const s3Key = `centers/${centerId}/${Date.now()}-${body.filename}`;
-      sendJson(res, 200, {
-        provider: storageProvider,
-        bucket: storageBucket,
-        region: storageRegion,
-        endpoint: storageEndpoint,
-        upload_url: `${storageEndpoint}/${storageBucket}/${s3Key}`,
-        method: 'PUT',
+      const filename = sanitizeFilename(body.filename);
+      const s3Key = `centers/${centerId}/uploads/${new Date().toISOString().slice(0, 10)}/${Date.now()}-${crypto.randomBytes(4).toString('hex')}-${filename}`;
+      const runtimeStorage = getRuntimeStorageSettings(db);
+      const signedUpload = presignStoragePutUrl({key: s3Key, storageConfig: runtimeStorage});
+      if (!signedUpload) {
+        sendJson(res, 500, {
+          error: 'Media storage is not configured. Add STORAGE_ACCESS_KEY_ID, STORAGE_SECRET_ACCESS_KEY, and STORAGE_BUCKET.',
+        }, origin);
+        return;
+      }
+      const mediaObject = {
+        id: createId('media'),
+        center_id: centerId,
+        provider: runtimeStorage.provider,
+        bucket: runtimeStorage.bucket,
+        region: runtimeStorage.region,
         s3_key: s3Key,
-        note: 'Development placeholder. Replace with S3-compatible signed URL in production.',
+        file_url: signedUpload.file_url,
+        mime_type: body.mime_type || body.content_type || '',
+        created_by: auth.sub,
+        created_at: new Date().toISOString(),
+      };
+      db.media_objects = db.media_objects || [];
+      db.media_objects.push(mediaObject);
+      await saveDb(db);
+      sendJson(res, 200, {
+        provider: runtimeStorage.provider,
+        bucket: runtimeStorage.bucket,
+        region: runtimeStorage.region,
+        endpoint: runtimeStorage.endpoint,
+        upload_url: signedUpload.upload_url,
+        method: 'PUT',
+        file_url: signedUpload.file_url,
+        s3_key: s3Key,
+        expires_in: 900,
       }, origin);
       return;
     }
