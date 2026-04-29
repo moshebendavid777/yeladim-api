@@ -12,11 +12,20 @@ const dbPath = path.join(dataDir, 'dev-db.json');
 const port = Number(process.env.PORT || 4100);
 const jwtSecret = process.env.JWT_SECRET || 'dev-secret-change-before-production';
 const salesEmail = process.env.SALES_EMAIL || 'sales@yeladim.app';
+const configuredOrigins = (process.env.ALLOWED_ORIGINS || '')
+  .split(',')
+  .map(origin => origin.trim())
+  .filter(Boolean);
 const allowedOrigins = new Set([
   'http://localhost:5174',
   'http://localhost:5175',
   'http://localhost:8081',
   'http://localhost:19006',
+  'https://eynomer.com',
+  'https://www.eynomer.com',
+  'https://controladm.eynomer.com',
+  'https://owner.eynomer.com',
+  ...configuredOrigins,
 ]);
 
 const defaultDb = {
@@ -139,9 +148,11 @@ async function saveDb(db) {
 }
 
 function sendJson(res, status, body, origin) {
+  const allowedOrigin = allowedOrigins.has(origin) ? origin : [...allowedOrigins][0];
   res.writeHead(status, {
     'Content-Type': 'application/json',
-    'Access-Control-Allow-Origin': allowedOrigins.has(origin) ? origin : '*',
+    'Access-Control-Allow-Origin': allowedOrigin,
+    'Vary': 'Origin',
     'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Yeladim-Center-ID',
     'Access-Control-Allow-Methods': 'GET, POST, PATCH, OPTIONS',
   });
