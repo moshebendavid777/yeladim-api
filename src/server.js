@@ -38,6 +38,7 @@ const allowedOrigins = new Set([
   'https://www.eynomer.com',
   'https://controladm.eynomer.com',
   'https://owner.eynomer.com',
+  'https://yeladim-owner-admin-vi4mq.ondigitalocean.app',
   ...configuredOrigins,
 ]);
 
