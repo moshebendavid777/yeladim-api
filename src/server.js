@@ -13,6 +13,8 @@ const host = process.env.API_BIND_HOST || '0.0.0.0';
 const port = Number(process.env.PORT || 4100);
 const jwtSecret = process.env.JWT_SECRET || 'dev-secret-change-before-production';
 const salesEmail = process.env.SALES_EMAIL || 'sales@yeladim.app';
+const salesFromEmail = process.env.SALES_FROM_EMAIL || 'Yeladim <sales@yeladim.app>';
+const resendApiKey = process.env.RESEND_API_KEY;
 const databaseUrl = process.env.DATABASE_URL;
 const bootstrapOwnerEmail = process.env.OWNER_EMAIL;
 const bootstrapOwnerPassword = process.env.OWNER_PASSWORD;
@@ -322,6 +324,49 @@ function audit(db, actor, action, target, metadata = {}) {
   });
 }
 
+function formatLeadEmail(lead) {
+  return [
+    `New Yeladim ${lead.requestType} request`,
+    '',
+    `Name: ${lead.fullName}`,
+    `Email: ${lead.email}`,
+    `Phone: ${lead.phone || 'Not provided'}`,
+    `Center: ${lead.centerName}`,
+    `Role: ${lead.role || 'Not provided'}`,
+    `Number of centers: ${lead.centers || '1'}`,
+    '',
+    'Message:',
+    lead.message || 'No extra message provided.',
+  ].join('\n');
+}
+
+async function sendSalesLeadEmail(lead) {
+  if (!resendApiKey) {
+    return {sent: false, reason: 'email_provider_not_configured'};
+  }
+
+  const response = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${resendApiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      from: salesFromEmail,
+      to: [salesEmail],
+      reply_to: lead.email,
+      subject: `Yeladim ${lead.requestType} request from ${lead.centerName || lead.fullName}`,
+      text: formatLeadEmail(lead),
+    }),
+  });
+
+  if (!response.ok) {
+    return {sent: false, reason: 'email_provider_rejected'};
+  }
+
+  return {sent: true};
+}
+
 function buildSession(db, user) {
   const centers = user.center_id
     ? db.centers.filter(center => center.id === user.center_id)
@@ -580,7 +625,14 @@ async function route(req, res) {
       db.leads.unshift(lead);
       audit(db, 'public_site', 'lead_created', lead.centerName, {email: lead.email});
       await saveDb(db);
-      sendJson(res, 201, {lead, email_to: salesEmail}, origin);
+      let emailDelivery = {sent: false, reason: 'email_provider_not_configured'};
+      try {
+        emailDelivery = await sendSalesLeadEmail(lead);
+      } catch (error) {
+        console.error('Could not send lead email', error);
+        emailDelivery = {sent: false, reason: 'email_delivery_failed'};
+      }
+      sendJson(res, 201, {lead, email_to: salesEmail, email_delivery: emailDelivery}, origin);
       return;
     }
 
