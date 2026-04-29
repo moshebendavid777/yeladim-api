@@ -287,6 +287,8 @@ function presignStoragePutUrl({key, storageConfig, expires = 900}) {
 
   const endpointUrl = new URL(storageConfig.endpoint);
   const host = endpointUrl.host;
+  const uploadHeaders = storageConfig.cdnUrl ? {'x-amz-acl': 'public-read'} : {};
+  const signedHeaders = ['host', ...Object.keys(uploadHeaders).sort()];
   const now = new Date();
   const amzDate = now.toISOString().replace(/[:-]|\.\d{3}/g, '');
   const dateStamp = amzDate.slice(0, 8);
@@ -297,19 +299,25 @@ function presignStoragePutUrl({key, storageConfig, expires = 900}) {
     'X-Amz-Credential': `${storageAccessKeyId}/${credentialScope}`,
     'X-Amz-Date': amzDate,
     'X-Amz-Expires': String(expires),
-    'X-Amz-SignedHeaders': 'host',
+    'X-Amz-SignedHeaders': signedHeaders.join(';'),
   };
   const canonicalQuery = Object.keys(query)
     .sort()
     .map(name => `${encodeRfc3986(name)}=${encodeRfc3986(query[name])}`)
     .join('&');
+  const canonicalHeaders = [
+    `host:${host}`,
+    ...Object.keys(uploadHeaders)
+      .sort()
+      .map(name => `${name}:${uploadHeaders[name]}`),
+    '',
+  ].join('\n');
   const canonicalRequest = [
     'PUT',
     canonicalUri,
     canonicalQuery,
-    `host:${host}`,
-    '',
-    'host',
+    canonicalHeaders,
+    signedHeaders.join(';'),
     'UNSIGNED-PAYLOAD',
   ].join('\n');
   const stringToSign = [
@@ -326,6 +334,7 @@ function presignStoragePutUrl({key, storageConfig, expires = 900}) {
   return {
     upload_url: uploadUrl,
     file_url: `${fileBaseUrl.replace(/\/$/, '')}/${encodeS3Path(key)}`,
+    headers: uploadHeaders,
   };
 }
 
@@ -1119,6 +1128,7 @@ async function route(req, res) {
         upload_url: signedUpload.upload_url,
         method: 'PUT',
         file_url: signedUpload.file_url,
+        headers: signedUpload.headers,
         s3_key: s3Key,
         expires_in: 900,
       }, origin);
