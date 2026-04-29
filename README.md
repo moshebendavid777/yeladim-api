@@ -36,10 +36,20 @@ http://localhost:4100
 
 ## Production TODO
 
-1. Replace local JSON store with PostgreSQL + Prisma.
+1. Replace the transitional JSONB app-state table with fully normalized Prisma tables.
 2. Put API behind HTTPS only.
 3. Move secrets to AWS Secrets Manager or equivalent.
 4. Use AWS KMS for message encryption keys.
 5. Use S3 signed URLs for uploads.
 6. Add Redis-backed rate limiting and WebSocket presence.
 7. Add Postmark/SES email delivery for demo requests and invites.
+
+## DigitalOcean PostgreSQL
+
+Set this environment variable in the API service. Do not commit the real password.
+
+```text
+DATABASE_URL=postgresql://doadmin:YOUR_PASSWORD@private-yeladim-prod-db-do-user-16793964-0.j.db.ondigitalocean.com:25060/defaultdb?sslmode=require
+```
+
+The API uses PostgreSQL when `DATABASE_URL` is present. If it is missing, it falls back to `data/dev-db.json` for local development.

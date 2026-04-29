@@ -12,6 +12,7 @@ const dbPath = path.join(dataDir, 'dev-db.json');
 const port = Number(process.env.PORT || 4100);
 const jwtSecret = process.env.JWT_SECRET || 'dev-secret-change-before-production';
 const salesEmail = process.env.SALES_EMAIL || 'sales@yeladim.app';
+const databaseUrl = process.env.DATABASE_URL;
 const configuredOrigins = (process.env.ALLOWED_ORIGINS || '')
   .split(',')
   .map(origin => origin.trim())
@@ -57,6 +58,39 @@ const defaultDb = {
   media_objects: [],
   audit_events: [],
 };
+
+let pgPoolPromise;
+
+async function getPgPool() {
+  if (!databaseUrl) {
+    return null;
+  }
+  if (!pgPoolPromise) {
+    pgPoolPromise = import('pg').then(({Pool}) => new Pool({
+      connectionString: databaseUrl,
+      ssl: {rejectUnauthorized: false},
+    }));
+  }
+  return pgPoolPromise;
+}
+
+async function ensurePostgresStore(pool) {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS yeladim_app_state (
+      key TEXT PRIMARY KEY,
+      value JSONB NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query(
+    `
+      INSERT INTO yeladim_app_state (key, value)
+      VALUES ('main', $1::jsonb)
+      ON CONFLICT (key) DO NOTHING
+    `,
+    [JSON.stringify(defaultDb)],
+  );
+}
 
 function hashPassword(password) {
   const salt = 'dev-salt';
@@ -135,6 +169,13 @@ function decryptMessage(centerId, conversationId, record) {
 }
 
 async function loadDb() {
+  const pool = await getPgPool();
+  if (pool) {
+    await ensurePostgresStore(pool);
+    const result = await pool.query('SELECT value FROM yeladim_app_state WHERE key = $1', ['main']);
+    return result.rows[0]?.value || structuredClone(defaultDb);
+  }
+
   await mkdir(dataDir, {recursive: true});
   if (!existsSync(dbPath)) {
     await writeFile(dbPath, JSON.stringify(defaultDb, null, 2));
@@ -144,6 +185,20 @@ async function loadDb() {
 }
 
 async function saveDb(db) {
+  const pool = await getPgPool();
+  if (pool) {
+    await ensurePostgresStore(pool);
+    await pool.query(
+      `
+        UPDATE yeladim_app_state
+        SET value = $1::jsonb, updated_at = NOW()
+        WHERE key = 'main'
+      `,
+      [JSON.stringify(db)],
+    );
+    return;
+  }
+
   await writeFile(dbPath, JSON.stringify(db, null, 2));
 }
 
