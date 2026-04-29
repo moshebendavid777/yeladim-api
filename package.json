@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "build": "node --check src/server.js",
     "dev": "node src/server.js",
     "start": "NODE_ENV=production node src/server.js"
   },
